@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import re
+import hashlib
+import click
+import subprocess
+from functools import reduce
+
+
+@click.group()
+def cli():
+    pass
+
+
+def hash_str(s):
+    return str(int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8)
+
+
+def convert_lines(lines):
+    pattern = r"^.*(VID_[0-9A-Za-z_\-]+).*"
+    spattern = r"^.*(SVID_[0-9A-Za-z_\-]+).*"
+    dpattern = r"^.*(DVID_[0-9A-Za-z_\-]+).*"
+
+    new_lines = []
+
+    for line in lines:
+        r = re.match(pattern, line)
+        sr = re.match(spattern, line)
+        dr = re.match(dpattern, line)
+
+        if sr and dr:
+            srgroups = sr.groups()
+            drgroups = dr.groups()
+            sid = srgroups[0]
+            did = drgroups[0]
+            snum = hash_str(re.sub(r'^S', '', sid))
+            dnum = hash_str(re.sub(r'^D', '', did))
+            new_line = re.sub(r'SVID_[0-9A-Za-z_\-]+', snum, line)
+            new_line = re.sub(r'DVID_[0-9A-Za-z_\-]+', dnum, new_line)
+            new_lines.append(new_line)
+        else:
+            rgroups = r.groups()
+            id = rgroups[0]
+            num = hash_str(id)
+
+            new_lines.append(re.sub(r'VID_[0-9A-Za-z_\-]+', num, line))
+
+    return new_lines
+
+
+@cli.command(help="Convert csv file.")
+@click.argument('input', type=str)
+@click.option("-o", "--output", default='data', help="Output directory", type=str)
+def convert(input, output):
+    output_filename = 'converted_' + os.path.basename(input)
+    output_dir = os.path.abspath(output)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    output_fpath = os.path.join(output_dir, output_filename)
+
+    with open(input, 'r') as f:
+        lines = f.readlines()
+        new_lines = [lines[0], ] + convert_lines(lines[1:])
+
+    with open(output_fpath, 'w') as f:
+        f.writelines(new_lines)
+
+
+@cli.command(help="Convert csv files with human-readable id to csv files with int64 id.")
+@click.argument('input', type=str)
+@click.option("-o", "--output", default='data', help="Output directory", type=str)
+def batchconvert(input, output):
+    output_dir = os.path.abspath(output)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if not os.path.isdir(input):
+        print("%s is not a directory!")
+        sys.exit(1)
+
+    files = [os.path.join(input, file) for file in os.listdir(input)
+             if os.path.isfile(os.path.join(input, file)) and re.match(r'.*.csv$', file)]
+
+    for input in files:
+        output_filename = 'converted_' + os.path.basename(input)
+        output_fpath = os.path.join(output_dir, output_filename)
+        print("Convert %s to %s" % (input, output_fpath))
+
+        with open(input, 'r') as f:
+            lines = f.readlines()
+            new_lines = [lines[0], ] + convert_lines(lines[1:])
+
+        with open(output_fpath, 'w') as f:
+            f.writelines(new_lines)
+
+
+@cli.command(help="Convert xlsx to csv files.")
+@click.argument('input', type=str)
+@click.option("-o", "--output", default='data', help="Output directory", type=str)
+@click.option("-f", "--force", default=False, help="Force to override existed files.")
+def xlsx2csv(input, output, force):
+    output_dir = os.path.abspath(output)
+
+    if os.path.exists(output_dir):
+        if force:
+            print("Files maybe overrided in %s" % output_dir)
+        else:
+            print("%s exists!" % output_dir)
+            sys.exit(1)
+    else:
+        os.makedirs(output_dir)
+
+    subprocess.call("xlsx2csv -i -s 0 %s %s" % (input, output_dir), shell=True)
+
+
+if __name__ == "__main__":
+    cli()
